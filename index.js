@@ -1,5 +1,8 @@
 "use strict"
 
+/**
+ * Утилиты для работы с DOM.
+ */
 const Www = {
     newEl: function( tag ) { return document.createElement(tag); },
     newText: function( str ) { return document.createTextNode(str); },
@@ -26,9 +29,15 @@ function Model()
 {
     const COLUMNS = [ 'A', 'B', 'C' ];
     const field = [];
-    var current = Model.NONE;
-    var winner = Model.NONE;
-    var finished = false;
+    const players = [
+        null,
+        new Player(Model.CPU),  // игрок за X
+        new Player(Model.HUMAN) // игрок за O
+    ];
+    var hard_mode = false;      // сложный уровень игры CPU
+    var current = Model.NONE;   // кто ходит
+    var winner = Model.NONE;    // кто победитл
+    var finished = false;       // закончена ли игра
 
     for( var r=0; r<3; ++r ) {
         field[r] = [];
@@ -40,10 +49,22 @@ function Model()
      * Объект с параметрами игрока.
      * @constructor
      */
-    function Player( type )
+    function Player( tp )
     {
-        this.type = type;
-        this.str = (type == Model.CPU ? 'CPU' : (type == Model.HUMAN ? 'Гуманоид' : 'некто'));
+        var type;
+        var namestr;
+
+        change(tp);
+
+        function change( tp )
+        {
+            type = tp;
+            if( type == Model.CPU ) namestr = 'CPU'; else namestr = 'Гуманоид';
+        }
+
+        this.getType = function() { return type; }
+        this.getName = function() { return namestr; }
+        this.setType = function( tp ) { change(tp); }
     }
     /**
      * Объект с параметрами ячейки.
@@ -106,7 +127,7 @@ function Model()
      */
     function getColumnOwner( column )
     {
-        var who = field[column][0];
+        var who = field[0][column];
         if( who != Model.NONE ) {
             for( var r=1; r<3; ++r ) {
                 if( field[r][column] != who ) {
@@ -150,12 +171,8 @@ function Model()
         if( who != Model.NONE ) { winner = who; finished = true; return; }
         who = getDiagonalOwner(false);
         if( who != Model.NONE ) { winner = who; finished = true; return; }
-        if( winner == Model.NONE ) {
-            var list = makeAvailableList();
-            finished = list.length == 0;
-        } else {
-            finished = true;
-        }
+        var list = makeAvailableList();
+        finished = (list.length == 0);
     }
 
     this.isFinished = function() { return finished; }
@@ -164,23 +181,42 @@ function Model()
     this.getCellStr = function( r, c ) { return '{'+COLUMNS[c]+(r+1)+'}'; }
     this.getNext = function() { return current; }
     this.getNextStr = function() { return plrStr(current); }
+    this.getNextType = function() { return players[current].getType(); }
+    this.getNextName = function() { return players[current].getName(); }
     this.getSpot = function( r, c ) { return field[r][c]; }
     this.getSpotStr = function( r, c ) { return plrStr(field[r][c]); }
     /**
      * Новая игра.
      */
-    this.newGame = function()
+    this.newGame = function( cpu_side, cpu_hard )
     {
         resetField();           // сброс поля
+        if( cpu_side == Model.NONE ) cpu_side = 1 + Math.floor(Math.random(2));
+        players[cpu_side].setType(Model.CPU);
+        players[cpu_side==Model.CROSS?Model.NOUGHT:Model.CROSS].setType(Model.HUMAN);
+        hard_mode = !!cpu_hard;
         current = Model.CROSS;  // установка текущего игрока
         winner = Model.NONE;    // никто не победил
         finished = false;       // игра идет
     }
+    /**
+     * Обработка хода в {r,c}.
+     */
     this.play = function( r, c )
     {
         field[r][c] = current;
         checkGameEnd();
         current = (winner != Model.NONE ? Model.NONE : (current == Model.CROSS ? Model.NOUGHT : Model.CROSS));
+    }
+    /**
+     * Генерация хода.
+     * Возвращает объект {row,column}.
+     */
+    this.generateMove = function()
+    {
+        var list = makeAvailableList();
+        var index = Math.floor(Math.random()*list.length);
+        return { row: list[index].row, column: list[index].column };
     }
 }
 Model.NONE = 0;
@@ -197,6 +233,8 @@ function View( model )
 {
     const log = Www.get('log');
     const newgamebtn = Www.get('newgame-btn');
+    const sideselector = Www.get('cpu-side');
+    const levelselector = Www.get('cpu-level');
     const cells = [];
     const buttons = [];
     var ctl = null;
@@ -230,7 +268,7 @@ function View( model )
         else if( piece == Model.NOUGHT )
             Www.clear(Www.setCl(cells[r][c],'o'));
         else {
-            if( !model.isFinished() )
+            if( (!model.isFinished()) /*&& (model.getNextType()==Model.HUMAN)*/ )
                 Www.replace(Www.setCl(cells[r][c],''),Www.setCl(buttons[r][c],'spot '+getNextPlrClass()));
             else
                 Www.clear(Www.setCl(cells[r][c],''));
@@ -249,6 +287,16 @@ function View( model )
         ctl.handleNewGame();
     }
 
+    this.getSelectedSide = function()
+    {
+        var sidestr = sideselector.value;
+        return (sidestr=='X' ? Model.CROSS : (sidestr=='O' ? Model.NOUGHT : Model.NONE));
+    }
+    this.getHardMode = function()
+    {
+        var lvlstr = levelselector.value;
+        return (lvlstr=='high');
+    }
     this.setController = function( controller ) { ctl = controller; }
     this.log = function( str ) { Www.append(log,Www.newPara(str)); }
     this.logRestart = function( str ) { Www.append(Www.clear(log),Www.newPara(str)); }
@@ -268,19 +316,26 @@ function View( model )
  */
 function Controller( model, view )
 {
+    function logMove()
+    {
+        view.log('Ходит '+model.getNextStr()+' ('+model.getNextName()+')');
+    }
     function reset()
     {
-        model.newGame();
+        // начало новой игры
+        model.newGame(view.getSelectedSide(),view.getHardMode());
         view.logRestart('Новая игра!');
     }
     function play( r, c )
     {
+        // обработка хода игрока
         var plr = model.getNext();
         model.play(r,c);
         view.log(model.getSpotStr(r,c)+' сыграл в '+model.getCellStr(r,c));
     }
     function next()
     {
+        // проверка на конец игры и сообщение соответствующее или подготовка к ходу
         view.prepareMove();
         if( model.isFinished() ) {
             var winner = model.getWinner();
@@ -292,6 +347,14 @@ function Controller( model, view )
             }
         } else {
             view.log('Ходит '+model.getNextStr());
+            if( model.getNextType() == Model.CPU ) {
+                view.log('Думаем...');
+                var move = model.generateMove();
+                setTimeout(function(){
+                    play(move.row,move.column);
+                    next();
+                },2000);
+            }
         }
     }
 
