@@ -188,7 +188,7 @@ function Model()
     {
         var list = makeAvailableList();
         // если первый ход, ходим в центр
-        if( list.length == 9 ) return { row: 1, column: 1 };
+        if( (list.length == 9) || ((list.length == 8) && (field[1][1] == Model.NONE)) ) return { row: 1, column: 1 };
         // иначе рассчитываем угрозы и шансы
         var me = colors[Model.CPU];
         var opp = colors[Model.HUMAN];
