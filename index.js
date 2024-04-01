@@ -27,6 +27,8 @@ function Model()
     const COLUMNS = [ 'A', 'B', 'C' ];
     const field = [];
     var current = Model.NONE;
+    var winner = Model.NONE;
+    var finished = false;
 
     for( var r=0; r<3; ++r ) {
         field[r] = [];
@@ -34,6 +36,42 @@ function Model()
             field[r][c] = Model.NONE;
     }
 
+    /**
+     * Объект с параметрами игрока.
+     * @constructor
+     */
+    function Player( type )
+    {
+        this.type = type;
+        this.str = (type == Model.CPU ? 'CPU' : (type == Model.HUMAN ? 'Гуманоид' : 'некто'));
+    }
+    /**
+     * Объект с параметрами ячейки.
+     * @constructor
+     */
+    function Cell( r, c )
+    {
+        this.row = r;
+        this.column = c;
+        this.threat = false;    // является ли угрозой (соперник выиграет если в нее сыграет)
+        this.chance = false;    // является ли шансом (мы выиграем если в нее сыграем)
+    }
+
+    /**
+     * Список доступных ячеек (класса Cell).
+     */
+    function makeAvailableList()
+    {
+        var ret = [];
+        for( var r=0; r<3; ++r )
+            for( var c=0; c<3; ++c )
+                if( field[r][c] == Model.NONE )
+                    ret.push(new Cell(r,c));
+        return ret;
+    }
+    /**
+     * Строка со значком игрока plr.
+     */
     function plrStr( plr )
     {
         return plr == Model.CROSS ? '\u00D7' : (plr == Model.NOUGHT ? '\u25CB' : 'никто');
@@ -47,7 +85,82 @@ function Model()
             for( var c=0; c<3; ++c )
                 field[r][c] = Model.NONE;
     }
+    /**
+     * Определяем кто заполнил строку row.
+     */
+    function getRowOwner( row )
+    {
+        var who = field[row][0];
+        if( who != Model.NONE ) {
+            for( var c=1; c<3; ++c ) {
+                if( field[row][c] != who ) {
+                    return Model.NONE;
+                }
+            }
+            return who;
+        } else
+            return Model.NONE; // никто не завершил строку
+    }
+    /**
+     * Определяем кто заполнил столбец column.
+     */
+    function getColumnOwner( column )
+    {
+        var who = field[column][0];
+        if( who != Model.NONE ) {
+            for( var r=1; r<3; ++r ) {
+                if( field[r][column] != who ) {
+                    return Model.NONE;
+                }
+            }
+            return who;
+        } else
+            return Model.NONE; // никто не завершил столбец
+    }
+    /**
+     * Определяем кто заполнил диагональ (главную или побочную).
+     */
+    function getDiagonalOwner( main )
+    {
+        var who = main ? field[0][0] : field[0][2];
+        if( who != Model.NONE ) {
+            for( var r=1; r<3; ++r ) {
+                if( field[r][main?r:3-r-1] != who ) {
+                    return Model.NONE;
+                }
+            }
+            return who;
+        } else
+            return Model.NONE; // никто не завершил столбец
+    }
+    /**
+     * Проверка на окончание игры.
+     */
+    function checkGameEnd()
+    {
+        winner = Model.NONE;
+        var who = winner;
+        for( var i=0; i<3; ++i ) {
+            who = getRowOwner(i);
+            if( who != Model.NONE ) { winner = who; finished = true; return; }
+            who = getColumnOwner(i);
+            if( who != Model.NONE ) { winner = who; finished = true; return; }
+        }
+        who = getDiagonalOwner(true);
+        if( who != Model.NONE ) { winner = who; finished = true; return; }
+        who = getDiagonalOwner(false);
+        if( who != Model.NONE ) { winner = who; finished = true; return; }
+        if( winner == Model.NONE ) {
+            var list = makeAvailableList();
+            finished = list.length == 0;
+        } else {
+            finished = true;
+        }
+    }
 
+    this.isFinished = function() { return finished; }
+    this.getWinner = function() { return winner; }
+    this.getWinnerStr = function() { return plrStr(winner); }
     this.getCellStr = function( r, c ) { return '{'+COLUMNS[c]+(r+1)+'}'; }
     this.getNext = function() { return current; }
     this.getNextStr = function() { return plrStr(current); }
@@ -60,16 +173,21 @@ function Model()
     {
         resetField();           // сброс поля
         current = Model.CROSS;  // установка текущего игрока
+        winner = Model.NONE;    // никто не победил
+        finished = false;       // игра идет
     }
     this.play = function( r, c )
     {
         field[r][c] = current;
-        current = (current == Model.CROSS ? Model.NOUGHT : Model.CROSS);
+        checkGameEnd();
+        current = (winner != Model.NONE ? Model.NONE : (current == Model.CROSS ? Model.NOUGHT : Model.CROSS));
     }
 }
 Model.NONE = 0;
 Model.CROSS = 1;
 Model.NOUGHT = 2;
+Model.CPU = 0;
+Model.HUMAN = 1;
 
 /**
  * Вид
@@ -111,8 +229,12 @@ function View( model )
             Www.clear(Www.setCl(cells[r][c],'x'));
         else if( piece == Model.NOUGHT )
             Www.clear(Www.setCl(cells[r][c],'o'));
-        else
-            Www.replace(Www.setCl(cells[r][c],''),Www.setCl(buttons[r][c],'spot '+getNextPlrClass()));
+        else {
+            if( !model.isFinished() )
+                Www.replace(Www.setCl(cells[r][c],''),Www.setCl(buttons[r][c],'spot '+getNextPlrClass()));
+            else
+                Www.clear(Www.setCl(cells[r][c],''));
+        }
     }
 
     function onSpotClicked( ev )
@@ -146,6 +268,33 @@ function View( model )
  */
 function Controller( model, view )
 {
+    function reset()
+    {
+        model.newGame();
+        view.logRestart('Новая игра!');
+    }
+    function play( r, c )
+    {
+        var plr = model.getNext();
+        model.play(r,c);
+        view.log(model.getSpotStr(r,c)+' сыграл в '+model.getCellStr(r,c));
+    }
+    function next()
+    {
+        view.prepareMove();
+        if( model.isFinished() ) {
+            var winner = model.getWinner();
+            if( winner != Model.NONE ) {
+                var winnerstr = model.getWinnerStr();
+                view.log('Игра окончена! Победитель: '+winnerstr+'!');
+            } else {
+                view.log('Игра завершилась вничью!');
+            }
+        } else {
+            view.log('Ходит '+model.getNextStr());
+        }
+    }
+
     this.run = function()
     {
         view.setController(this);
@@ -153,18 +302,13 @@ function Controller( model, view )
     }
     this.handleSpot = function( r, c )
     {
-        var plr = model.getNext();
-        model.play(r,c);
-        view.log(model.getSpotStr(r,c)+' помещен в '+model.getCellStr(r,c));
-        view.log('Ход '+model.getNextStr());
-        view.prepareMove();
+        play(r,c);
+        next();
     }
     this.handleNewGame = function()
     {
-        model.newGame();
-        view.logRestart('Новая игра!');
-        view.log('Ход '+model.getNextStr());
-        view.prepareMove();
+        reset();
+        next();
     }
 }
 
