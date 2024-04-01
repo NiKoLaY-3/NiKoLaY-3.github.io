@@ -34,9 +34,13 @@ function Model()
         new Player(Model.CPU),  // игрок за X
         new Player(Model.HUMAN) // игрок за O
     ];
-    var hard_mode = false;      // сложный уровень игры CPU
+    const colors = [
+        Model.CROSS,    // фигурка CPU
+        Model.NOUGHT    // фигурка игрока
+    ]
+    var hard_mode = false;      // умный бот?
     var current = Model.NONE;   // кто ходит
-    var winner = Model.NONE;    // кто победитл
+    var winner = Model.NONE;    // кто победил
     var finished = false;       // закончена ли игра
 
     for( var r=0; r<3; ++r ) {
@@ -91,20 +95,42 @@ function Model()
         return ret;
     }
     /**
-     * Строка со значком игрока plr.
+     * Проверка угроза ли клетка {row,col} со стороны игрока opp.
      */
-    function plrStr( plr )
+    function isThreat( row, col, opp )
     {
-        return plr == Model.CROSS ? '\u00D7' : (plr == Model.NOUGHT ? '\u25CB' : 'никто');
-    }
-    /**
-     * Сброс поля.
-     */
-    function resetField()
-    {
-        for( var r=0; r<3; ++r )
-            for( var c=0; c<3; ++c )
-                field[r][c] = Model.NONE;
+        // проверим столбец
+        var result = true;
+        for( var r=0; r<3; ++r ) {
+            if( (r!=row) && (field[r][col] != opp) )
+                result = false;
+        }
+        if( result ) return result;
+        // проверим строку
+        result = true;
+        for( var c=0; c<3; ++c ) {
+            if( (c!=col) && (field[row][c] != opp) )
+                result = false;
+        }
+        if( result ) return true;
+        // проверим диагональ главную
+        if( row == col ) {
+            result = true;
+            for( var i=0; i<3; ++i ) {
+                if( (i!=col) && (field[i][i] != opp) )
+                    result = false;
+            }
+            if( result ) return true;
+        }
+        // проверим диагональ побочную
+        if( row == 3-col-1 ) {
+            result = true;
+            for( var i=0; i<3; ++i ) {
+                if( (i!=row) && (field[i][3-i-1] != opp) )
+                    result = false;
+            }
+        }
+        return result;
     }
     /**
      * Определяем кто заполнил строку row.
@@ -155,6 +181,58 @@ function Model()
             return Model.NONE; // никто не завершил столбец
     }
     /**
+     * Распределяем клетки в соответствии с уровнем
+     * предпочтительности и выбираем верхнюю.
+     */
+    function selectMove()
+    {
+        var list = makeAvailableList();
+        // если первый ход, ходим в центр
+        if( list.length == 9 ) return { row: 1, column: 1 };
+        // иначе рассчитываем угрозы и шансы
+        var me = colors[Model.CPU];
+        var opp = colors[Model.HUMAN];
+        for( var i in list ) {
+            var r = list[i].row;
+            var c = list[i].column;
+            list[i].threat = isThreat(r,c,opp);
+            list[i].chance = isThreat(r,c,me);
+        }
+        list.sort(function(a,b){
+            if( a.chance ) return -1;
+            else if( b.chance ) return 1;
+            else if( a.threat ) return -1;
+            else if( b.threat ) return 1;
+            else return 0;
+        });
+        return { row: list[0].row, column: list[0].column };
+    }
+    /**
+     * Просто выбираем случайную клетку!
+     */
+    function selectMoveSimple()
+    {
+        var list = makeAvailableList();
+        var index = Math.floor(Math.random()*list.length);
+        return { row: list[index].row, column: list[index].column };
+    }
+    /**
+     * Строка со значком игрока plr.
+     */
+    function plrStr( plr )
+    {
+        return plr == Model.CROSS ? '\u00D7' : (plr == Model.NOUGHT ? '\u25CB' : 'никто');
+    }
+    /**
+     * Сброс поля.
+     */
+    function resetField()
+    {
+        for( var r=0; r<3; ++r )
+            for( var c=0; c<3; ++c )
+                field[r][c] = Model.NONE;
+    }
+    /**
      * Проверка на окончание игры.
      */
     function checkGameEnd()
@@ -183,6 +261,8 @@ function Model()
     this.getNextStr = function() { return plrStr(current); }
     this.getNextType = function() { return players[current].getType(); }
     this.getNextName = function() { return players[current].getName(); }
+    this.getPlrType = function( plr ) { return players[plr].getType(); }
+    this.getPlrName = function( plr ) { return players[plr].getName(); }
     this.getSpot = function( r, c ) { return field[r][c]; }
     this.getSpotStr = function( r, c ) { return plrStr(field[r][c]); }
     /**
@@ -191,9 +271,12 @@ function Model()
     this.newGame = function( cpu_side, cpu_hard )
     {
         resetField();           // сброс поля
-        if( cpu_side == Model.NONE ) cpu_side = 1 + Math.floor(Math.random(2));
-        players[cpu_side].setType(Model.CPU);
-        players[cpu_side==Model.CROSS?Model.NOUGHT:Model.CROSS].setType(Model.HUMAN);
+        var cpu = (cpu_side == Model.NONE ? Model.CROSS + Math.floor(Math.random() * 2) : cpu_side);
+        var human = (cpu == Model.CROSS ? Model.NOUGHT : Model.CROSS);
+        players[cpu].setType(Model.CPU);
+        players[human].setType(Model.HUMAN);
+        colors[Model.CPU] = cpu;
+        colors[Model.HUMAN] = human;
         hard_mode = !!cpu_hard;
         current = Model.CROSS;  // установка текущего игрока
         winner = Model.NONE;    // никто не победил
@@ -214,16 +297,14 @@ function Model()
      */
     this.generateMove = function()
     {
-        var list = makeAvailableList();
-        var index = Math.floor(Math.random()*list.length);
-        return { row: list[index].row, column: list[index].column };
+        return hard_mode ? selectMove() : selectMoveSimple();
     }
 }
-Model.NONE = 0;
-Model.CROSS = 1;
-Model.NOUGHT = 2;
-Model.CPU = 0;
-Model.HUMAN = 1;
+Model.NONE = 0;     // никто
+Model.CROSS = 1;    // крестик
+Model.NOUGHT = 2;   // нолик
+Model.CPU = 0;      // бот
+Model.HUMAN = 1;    // человек
 
 /**
  * Вид
@@ -268,7 +349,7 @@ function View( model )
         else if( piece == Model.NOUGHT )
             Www.clear(Www.setCl(cells[r][c],'o'));
         else {
-            if( (!model.isFinished()) /*&& (model.getNextType()==Model.HUMAN)*/ )
+            if( (!model.isFinished()) && (model.getNextType()==Model.HUMAN) )
                 Www.replace(Www.setCl(cells[r][c],''),Www.setCl(buttons[r][c],'spot '+getNextPlrClass()));
             else
                 Www.clear(Www.setCl(cells[r][c],''));
@@ -324,7 +405,7 @@ function Controller( model, view )
     {
         // начало новой игры
         model.newGame(view.getSelectedSide(),view.getHardMode());
-        view.logRestart('Новая игра!');
+        view.logRestart('Новая игра! (\u00D7: '+model.getPlrName(Model.CROSS)+', \u25CB: '+model.getPlrName(Model.NOUGHT)+')');
     }
     function play( r, c )
     {
@@ -346,14 +427,14 @@ function Controller( model, view )
                 view.log('Игра завершилась вничью!');
             }
         } else {
-            view.log('Ходит '+model.getNextStr());
+            logMove();
             if( model.getNextType() == Model.CPU ) {
                 view.log('Думаем...');
                 var move = model.generateMove();
                 setTimeout(function(){
                     play(move.row,move.column);
                     next();
-                },2000);
+                },1000);
             }
         }
     }
